@@ -1,0 +1,11 @@
+{
+  "name": "Music Search & Ringtone Maker",
+  "description": "Search songs by artist, inspect rhythm and key charts, trim audio snippets, and export custom MP3 ringtones.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
+
