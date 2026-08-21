@@ -29,7 +29,7 @@ export const Header: React.FC<HeaderProps> = ({
               RhythmRing MP3
             </h1>
             <p className="text-xs text-slate-400 font-medium">
-              Crea suonerie personalizzate dai tuoi brani preferiti o dai tuoi file
+              Create custom ringtones from your favorite tracks or audio files
             </p>
           </div>
         </div>
@@ -49,7 +49,7 @@ export const Header: React.FC<HeaderProps> = ({
             className="relative flex items-center gap-2 px-3.5 sm:px-4 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white rounded-xl font-medium text-xs sm:text-sm transition-all shadow-md shadow-indigo-600/20 hover:shadow-indigo-500/30 active:scale-[0.98]"
           >
             <Bell className="w-4 h-4 text-indigo-200" />
-            <span>Le Mie Suonerie</span>
+            <span>My Ringtones</span>
             {ringtonesCount > 0 && (
               <span className="ml-1 px-2 py-0.5 bg-rose-500 text-white text-xs font-bold rounded-full animate-pulse">
                 {ringtonesCount}

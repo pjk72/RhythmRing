@@ -10,12 +10,18 @@ import { SearchBar } from './components/SearchBar';
 import { SongList } from './components/SongList';
 import { RingtonesLibrary } from './components/RingtonesLibrary';
 import { AudioFileUploader } from './components/AudioFileUploader';
-import { Upload, Sparkles, Music, FileAudio } from 'lucide-react';
+import { Upload, Sparkles, Music, FileAudio, CheckCircle2, AlertCircle, Loader2, X } from 'lucide-react';
+
+interface ToastState {
+  type: 'loading' | 'success' | 'error';
+  message: string;
+}
 
 export default function App() {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isWindowDragging, setIsWindowDragging] = useState<boolean>(false);
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   // Ringtones Library State
   const [ringtones, setRingtones] = useState<SavedRingtone[]>(() => {
@@ -47,7 +53,7 @@ export default function App() {
     try {
       localStorage.setItem('custom_mp3_ringtones', JSON.stringify(ringtones));
     } catch (e) {
-      console.warn('Impossibile salvare in localStorage:', e);
+      console.warn('Unable to save to localStorage:', e);
     }
   }, [ringtones]);
 
@@ -66,7 +72,7 @@ export default function App() {
       const songResults = results.length > 0 ? results : getFallbackSongs(searchTerm);
       setTracks(songResults);
     } catch (error) {
-      console.error('Errore ricerca:', error);
+      console.error('Search error:', error);
       const fallback = getFallbackSongs(searchTerm);
       setTracks(fallback);
     } finally {
@@ -74,11 +80,11 @@ export default function App() {
     }
   };
 
-  const handleTrackUploaded = (newTrack: Track) => {
+  const handleTrackUploaded = useCallback((newTrack: Track) => {
     setTracks((prev) => [newTrack, ...prev.filter((t) => t.trackId !== newTrack.trackId)]);
     // Smooth scroll to top
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  }, []);
 
   const handleSaveRingtone = (newRingtone: SavedRingtone) => {
     setRingtones((prev) => [newRingtone, ...prev]);
@@ -94,14 +100,21 @@ export default function App() {
     }
   };
 
+  // Helper to check if drag event involves files
+  const isFileDragEvent = (e: DragEvent) => {
+    if (!e.dataTransfer) return false;
+    const types = Array.from(e.dataTransfer.types || []);
+    return types.includes('Files') || types.includes('public.file-url') || types.includes('application/x-moz-file');
+  };
+
   // Global window Drag & Drop handler
   useEffect(() => {
     let dragCounter = 0;
 
     const handleDragEnter = (e: DragEvent) => {
       e.preventDefault();
-      dragCounter++;
-      if (e.dataTransfer?.items && e.dataTransfer.items.length > 0) {
+      if (isFileDragEvent(e)) {
+        dragCounter++;
         setIsWindowDragging(true);
       }
     };
@@ -109,7 +122,8 @@ export default function App() {
     const handleDragLeave = (e: DragEvent) => {
       e.preventDefault();
       dragCounter--;
-      if (dragCounter <= 0) {
+      // Check if mouse actually left the browser window viewport
+      if (dragCounter <= 0 || e.clientX === 0 || e.clientY === 0) {
         setIsWindowDragging(false);
         dragCounter = 0;
       }
@@ -117,6 +131,9 @@ export default function App() {
 
     const handleDragOver = (e: DragEvent) => {
       e.preventDefault();
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = 'copy';
+      }
     };
 
     const handleDrop = async (e: DragEvent) => {
@@ -124,20 +141,46 @@ export default function App() {
       setIsWindowDragging(false);
       dragCounter = 0;
 
-      if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
-        for (let i = 0; i < e.dataTransfer.files.length; i++) {
-          const file = e.dataTransfer.files[i];
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0) {
+        let importedCount = 0;
+
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
           const isAudio =
             file.type.startsWith('audio/') ||
-            /\.(mp3|wav|ogg|m4a|aac|flac|webm|opus|wma|aiff)$/i.test(file.name);
+            file.type.includes('audio') ||
+            /\.(mp3|wav|ogg|m4a|aac|flac|webm|opus|wma|aiff|alac|caf|m4r|mid|midi|mp4)$/i.test(file.name);
 
           if (isAudio) {
+            setToast({
+              type: 'loading',
+              message: `Processing "${file.name}"...`,
+            });
+
             try {
               const track = await createTrackFromAudioFile(file);
               handleTrackUploaded(track);
-            } catch (err) {
-              console.error('Errore drop audio:', err);
+              importedCount++;
+              setToast({
+                type: 'success',
+                message: `"${file.name}" successfully loaded into Studio!`,
+              });
+              setTimeout(() => setToast(null), 4000);
+            } catch (err: any) {
+              console.error('Audio drop error:', err);
+              setToast({
+                type: 'error',
+                message: err.message || `Unable to open "${file.name}"`,
+              });
+              setTimeout(() => setToast(null), 5000);
             }
+          } else {
+            setToast({
+              type: 'error',
+              message: `"${file.name}" is not a valid audio format. Please drop MP3, WAV, M4A, AAC, OGG, or FLAC files.`,
+            });
+            setTimeout(() => setToast(null), 5000);
           }
         }
       }
@@ -154,20 +197,56 @@ export default function App() {
       window.removeEventListener('dragover', handleDragOver);
       window.removeEventListener('drop', handleDrop);
     };
-  }, []);
+  }, [handleTrackUploaded]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white relative">
+      {/* Toast Notification Banner */}
+      {toast && (
+        <div className="fixed top-20 right-4 z-50 animate-in fade-in slide-in-from-top-4 duration-300 max-w-md">
+          <div
+            className={`flex items-center gap-3 p-3.5 sm:p-4 rounded-2xl shadow-2xl backdrop-blur-xl border ${
+              toast.type === 'loading'
+                ? 'bg-slate-900/95 border-indigo-500/50 text-indigo-200'
+                : toast.type === 'success'
+                ? 'bg-emerald-950/95 border-emerald-500/50 text-emerald-100'
+                : 'bg-rose-950/95 border-rose-500/50 text-rose-100'
+            }`}
+          >
+            {toast.type === 'loading' && <Loader2 className="w-5 h-5 animate-spin text-indigo-400 shrink-0" />}
+            {toast.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />}
+            {toast.type === 'error' && <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />}
+            <p className="text-xs sm:text-sm font-medium flex-1">{toast.message}</p>
+            <button
+              type="button"
+              onClick={() => setToast(null)}
+              className="text-slate-400 hover:text-white p-1 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Global Drag & Drop Overlay */}
       {isWindowDragging && (
-        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md border-4 border-dashed border-pink-500 flex flex-col items-center justify-center p-6 pointer-events-none animate-in fade-in duration-200">
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+          }}
+          className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md border-4 border-dashed border-pink-500 flex flex-col items-center justify-center p-6 animate-in fade-in duration-200 cursor-copy"
+        >
           <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-pink-500 via-rose-500 to-amber-500 flex items-center justify-center text-white shadow-2xl mb-4 animate-bounce">
             <Upload className="w-10 h-10" />
           </div>
-          <h2 className="text-2xl font-black text-white">Rilascia il File Audio qui</h2>
-          <p className="text-slate-300 text-sm mt-1">
-            Verrà importato istantaneamente nello Studio per taglio e montaggio
+          <h2 className="text-2xl font-black text-white">Drop Audio File Here</h2>
+          <p className="text-slate-300 text-sm mt-1 text-center max-w-md">
+            It will be instantly imported into the Studio for rhythm analysis, trimming, and ringtone creation
           </p>
+          <div className="mt-4 flex items-center gap-2 text-xs text-pink-300/80 bg-pink-950/60 px-3 py-1.5 rounded-full border border-pink-500/30 font-medium">
+            <span>Supports MP3, WAV, M4A, AAC, OGG, FLAC, and other audio formats</span>
+          </div>
         </div>
       )}
 
@@ -211,8 +290,8 @@ export default function App() {
       {/* Footer */}
       <footer className="border-t border-slate-900 bg-slate-950/90 py-6 text-center text-xs text-slate-500">
         <div className="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <p>© {new Date().getFullYear()} RhythmRing MP3 — Crea suonerie personalizzate dai tuoi brani preferiti o dai tuoi file.</p>
-          <p className="text-slate-600">Alimentato da iTunes Search API & Web Audio Engine</p>
+          <p>© {new Date().getFullYear()} RhythmRing MP3 — Create custom ringtones from your favorite tracks or local audio files.</p>
+          <p className="text-slate-600">Powered by iTunes Search API & Web Audio Engine</p>
         </div>
       </footer>
     </div>

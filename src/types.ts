@@ -23,14 +23,14 @@ export interface RhythmAnalysis {
   bpm: number;
   tempoName: string; // e.g. "Allegro (128 BPM)", "Moderato (105 BPM)"
   timeSignature: string; // "4/4"
-  energyLevel: 'Bassa' | 'Media' | 'Alta' | 'Molto Alta';
+  energyLevel: 'Low' | 'Medium' | 'High' | 'Very High' | 'Bassa' | 'Media' | 'Alta' | 'Molto Alta';
   rhythmGraph: { timeSec: number; energy: number; beatPulse: number }[];
 }
 
 export interface KeyAnalysis {
-  key: string; // e.g. "La Minore (A Minor)", "Do Maggiore (C Major)"
+  key: string; // e.g. "A Minor", "C Major"
   camelotKey: string; // e.g. "8A", "8B"
-  mode: 'Maggiore' | 'Minore';
+  mode: 'Major' | 'Minor' | 'Maggiore' | 'Minore';
   chromaGraph: { note: string; intensity: number; isDominant: boolean }[];
   harmonicProfile: string;
 }

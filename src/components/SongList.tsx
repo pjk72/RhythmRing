@@ -18,9 +18,9 @@ export const SongList: React.FC<SongListProps> = ({
     return (
       <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-12 flex flex-col items-center justify-center min-h-[360px]">
         <div className="w-12 h-12 rounded-full border-4 border-indigo-500/30 border-t-indigo-500 animate-spin mb-4" />
-        <p className="text-slate-200 font-semibold text-base">Ricerca brani e album in corso...</p>
+        <p className="text-slate-200 font-semibold text-base">Searching tracks and albums...</p>
         <p className="text-slate-400 text-xs mt-1">
-          Analisi delle frequenze e caricamento timeline audio
+          Analyzing frequencies and loading audio timeline
         </p>
       </div>
     );
@@ -32,9 +32,9 @@ export const SongList: React.FC<SongListProps> = ({
         <div className="w-16 h-16 rounded-2xl bg-slate-800/80 flex items-center justify-center text-slate-400 mb-4 shadow-lg">
           <Music className="w-8 h-8" />
         </div>
-        <h3 className="text-slate-100 font-bold text-lg">Nessun brano trovato</h3>
+        <h3 className="text-slate-100 font-bold text-lg">No tracks found</h3>
         <p className="text-slate-400 text-sm mt-1.5 max-w-md">
-          Prova a cercare con un altro nome artista o titolo brano tramite la barra di ricerca in alto.
+          Try searching for another artist or track title using the search bar above, or upload your own audio file.
         </p>
       </div>
     );

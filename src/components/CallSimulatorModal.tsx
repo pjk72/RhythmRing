@@ -1,6 +1,6 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { SavedRingtone } from '../types';
-import { PhoneCall, PhoneOff, Volume2, ShieldAlert, Sparkles } from 'lucide-react';
+import { PhoneCall, PhoneOff, Volume2, Sparkles } from 'lucide-react';
 import { bufferToAudioBlob, createSynthAudioBuffer } from '../utils/audioUtils';
 import { globalAudioManager } from '../utils/audioPlaybackManager';
 
@@ -14,95 +14,148 @@ export const CallSimulatorModal: React.FC<CallSimulatorModalProps> = ({
   onClose,
 }) => {
   const [callAnswered, setCallAnswered] = useState(false);
+  const activeAudioRef = useRef<HTMLAudioElement | null>(null);
+  const timerRef = useRef<number | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
-  const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
+
+  const stopAudio = useCallback(() => {
+    if (timerRef.current) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (activeAudioRef.current) {
+      try {
+        activeAudioRef.current.pause();
+        activeAudioRef.current.currentTime = 0;
+      } catch (e) {}
+      activeAudioRef.current = null;
+    }
+    globalAudioManager.stop('call-simulator');
+  }, []);
 
   useEffect(() => {
-    if (!ringtone) return;
+    if (!ringtone || callAnswered) {
+      stopAudio();
+      return;
+    }
 
-    let isMounted = true;
+    const { startTime = 0, endTime = 30, fadeInSec = 0, fadeOutSec = 0 } = ringtone;
 
-    async function playRingtone() {
+    const getGain = (curr: number) => {
+      const rel = curr - startTime;
+      const rem = endTime - curr;
+      let gain = 1.0;
+      if (fadeInSec > 0 && rel >= 0 && rel < fadeInSec) {
+        gain = Math.min(gain, Math.max(0.05, rel / fadeInSec));
+      }
+      if (fadeOutSec > 0 && rem >= 0 && rem < fadeOutSec) {
+        gain = Math.min(gain, Math.max(0.05, rem / fadeOutSec));
+      }
+      return Math.max(0.05, Math.min(1.0, gain));
+    };
+
+    const playSynth = () => {
       try {
         if (!audioCtxRef.current) {
-          audioCtxRef.current = new (window.AudioContext ||
-            (window as any).webkitAudioContext)();
+          audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
         }
         const ctx = audioCtxRef.current;
-        if (ctx.state === 'suspended') {
-          await ctx.resume();
-        }
+        const synthBuf = createSynthAudioBuffer(ctx, ringtone.bpm || 120, 30);
+        const blob = bufferToAudioBlob(synthBuf, startTime, endTime, fadeInSec, fadeOutSec);
+        const blobUrl = URL.createObjectURL(blob);
+        const audio = new Audio(blobUrl);
+        activeAudioRef.current = audio;
+        audio.loop = true;
+        audio.play().catch(() => {});
+      } catch (e) {}
+    };
 
-        let audioBuffer: AudioBuffer | null = null;
-        if (ringtone?.previewUrl) {
-          try {
-            const resp = await fetch(ringtone.previewUrl);
-            if (resp.ok) {
-              const arrayBuf = await resp.arrayBuffer();
-              audioBuffer = await ctx.decodeAudioData(arrayBuf);
-            }
-          } catch (e) {
-            console.warn('Fallback a sintetizzatore per simulatore chiamata:', e);
+    const audioUrl = ringtone.previewUrl || ringtone.audioBlobUrl;
+
+    if (audioUrl) {
+      const audio = new Audio();
+      activeAudioRef.current = audio;
+      audio.preload = 'auto';
+      audio.src = audioUrl;
+
+      const loopCheckInterval = () => {
+        if (timerRef.current) clearInterval(timerRef.current);
+        timerRef.current = window.setInterval(() => {
+          if (!activeAudioRef.current) {
+            if (timerRef.current) clearInterval(timerRef.current);
+            return;
           }
+          const ct = activeAudioRef.current.currentTime;
+          // Loop back to startTime when reaching endTime or end of track
+          if (ct >= endTime || (activeAudioRef.current.duration && ct >= activeAudioRef.current.duration)) {
+            try {
+              activeAudioRef.current.currentTime = startTime;
+              activeAudioRef.current.volume = fadeInSec > 0 ? 0.05 : 1.0;
+              activeAudioRef.current.play().catch(() => {});
+            } catch (e) {}
+          } else if (ct >= startTime) {
+            try {
+              activeAudioRef.current.volume = getGain(ct);
+            } catch (e) {}
+          }
+        }, 25);
+      };
+
+      audio.onloadedmetadata = () => {
+        if (startTime > 0) {
+          try {
+            audio.currentTime = startTime;
+          } catch (e) {}
         }
+      };
 
-        if (!audioBuffer) {
-          audioBuffer = createSynthAudioBuffer(ctx, ringtone?.bpm || 120, 30);
+      audio.oncanplay = () => {
+        if (startTime > 0 && Math.abs(audio.currentTime - startTime) > 0.5) {
+          try {
+            audio.currentTime = startTime;
+          } catch (e) {}
         }
+      };
 
-        const source = ctx.createBufferSource();
-        source.buffer = audioBuffer;
-        source.loop = true;
-        source.connect(ctx.destination);
-        
-        if (isMounted) {
-          globalAudioManager.play('call-simulator', () => {
-            if (sourceNodeRef.current) {
-              try {
-                sourceNodeRef.current.stop();
-              } catch (e) {}
-              sourceNodeRef.current = null;
-            }
-          });
+      audio.onerror = () => {
+        playSynth();
+      };
 
-          source.start(0, ringtone.startTime, ringtone.durationSec);
-          sourceNodeRef.current = source;
-        }
-      } catch (err) {
-        console.warn('Errore riproduzione suoneria chiamata:', err);
-      }
-    }
+      globalAudioManager.play('call-simulator', () => {
+        stopAudio();
+      });
 
-    playRingtone();
-
-    return () => {
-      isMounted = false;
-      globalAudioManager.stop('call-simulator');
-      if (sourceNodeRef.current) {
+      if (startTime > 0) {
         try {
-          sourceNodeRef.current.stop();
+          audio.currentTime = startTime;
         } catch (e) {}
       }
-    };
-  }, [ringtone]);
+      audio.volume = fadeInSec > 0 ? 0.05 : 1.0;
 
-  if (!ringtone) return null;
+      audio.play().then(() => {
+        loopCheckInterval();
+      }).catch((err) => {
+        console.warn('Call simulator audio play failed:', err);
+        if (err?.name !== 'AbortError') {
+          playSynth();
+        }
+      });
+    } else {
+      playSynth();
+    }
+
+    return () => {
+      stopAudio();
+    };
+  }, [ringtone, callAnswered, stopAudio]);
 
   const handleHangUp = () => {
-    if (sourceNodeRef.current) {
-      try {
-        sourceNodeRef.current.stop();
-      } catch (e) {}
-    }
+    stopAudio();
     onClose();
   };
 
   const handleAnswer = () => {
-    if (sourceNodeRef.current) {
-      try {
-        sourceNodeRef.current.stop();
-      } catch (e) {}
-    }
+    stopAudio();
     setCallAnswered(true);
   };
 
@@ -118,7 +171,7 @@ export const CallSimulatorModal: React.FC<CallSimulatorModalProps> = ({
         {/* Status text */}
         <div className="flex items-center gap-1.5 px-3 py-1 bg-rose-950/80 border border-rose-800/80 text-rose-300 text-xs font-semibold rounded-full mb-6">
           <Sparkles className="w-3.5 h-3.5 text-rose-400 animate-spin-slow" />
-          <span>{callAnswered ? 'Chiamata in corso (00:04)...' : 'Chiamata in Arrivo...'}</span>
+          <span>{callAnswered ? 'Call in progress (00:04)...' : 'Incoming Call...'}</span>
         </div>
 
         {/* Album / Caller Artwork */}
@@ -136,10 +189,10 @@ export const CallSimulatorModal: React.FC<CallSimulatorModalProps> = ({
         <h3 className="text-xl font-bold text-white tracking-tight">{ringtone.title}</h3>
         <p className="text-sm font-medium text-slate-400 mt-0.5">{ringtone.artist}</p>
 
-        {/* Suoneria tag */}
+        {/* Ringtone tag */}
         <div className="mt-3 px-3 py-1 bg-slate-800/90 rounded-xl border border-slate-700 text-xs text-indigo-300 font-medium flex items-center gap-1.5">
           <Volume2 className="w-3.5 h-3.5 text-indigo-400 animate-bounce" />
-          <span>Suoneria Personalizzata MP3 Active</span>
+          <span>Custom MP3 Ringtone Active</span>
         </div>
 
         {/* Call Action Controls */}
@@ -163,7 +216,7 @@ export const CallSimulatorModal: React.FC<CallSimulatorModalProps> = ({
                 >
                   <PhoneOff className="w-6 h-6" />
                 </button>
-                <span className="text-[11px] text-slate-400 font-medium">Rifiuta</span>
+                <span className="text-[11px] text-slate-400 font-medium">Decline</span>
               </div>
 
               {/* Answer Call */}
@@ -175,7 +228,7 @@ export const CallSimulatorModal: React.FC<CallSimulatorModalProps> = ({
                 >
                   <PhoneCall className="w-6 h-6" />
                 </button>
-                <span className="text-[11px] text-slate-400 font-medium">Rispondi</span>
+                <span className="text-[11px] text-slate-400 font-medium">Answer</span>
               </div>
             </>
           )}

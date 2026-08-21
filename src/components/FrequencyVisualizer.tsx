@@ -37,10 +37,8 @@ export const FrequencyVisualizer: React.FC<FrequencyVisualizerProps> = ({
   const peaksRef = useRef<number[]>([]);
   const peakHoldRef = useRef<number[]>([]);
 
-  // Setup Web Audio Analyser
+  // Setup Web Audio Analyser (only if safe or for synthesized audioBuffer)
   useEffect(() => {
-    if (!mediaElement) return;
-
     try {
       if (!audioContextRef.current) {
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -58,29 +56,9 @@ export const FrequencyVisualizer: React.FC<FrequencyVisualizerProps> = ({
         analyser.smoothingTimeConstant = 0.8;
         analyserRef.current = analyser;
       }
-
-      // Check if source node is already attached to this element
-      if (!(mediaElement as any).__hasAttachedSource && !sourceNodeRef.current) {
-        try {
-          const source = ctx.createMediaElementSource(mediaElement);
-          sourceNodeRef.current = source;
-          if (analyserRef.current) {
-            source.connect(analyserRef.current);
-            analyserRef.current.connect(ctx.destination);
-          }
-          (mediaElement as any).__hasAttachedSource = true;
-        } catch (sourceErr) {
-          // Source may already be connected or cross-origin restrictions apply
-          console.warn('MediaElementSource attach warning:', sourceErr);
-        }
-      }
     } catch (e) {
       console.warn('AudioContext setup warning:', e);
     }
-
-    return () => {
-      // Don't disconnect destination to preserve audio playback
-    };
   }, [mediaElement]);
 
   // Resume AudioContext when playback starts
@@ -352,7 +330,7 @@ export const FrequencyVisualizer: React.FC<FrequencyVisualizerProps> = ({
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
               <span className="text-[11px] sm:text-xs font-bold text-slate-200 uppercase tracking-wider">
-                Spettro Frequenze Real-Time
+                Real-Time Frequency Spectrum
               </span>
               <span
                 className={`text-[9px] font-mono px-1.5 py-0.2 rounded font-semibold border ${
@@ -389,7 +367,7 @@ export const FrequencyVisualizer: React.FC<FrequencyVisualizerProps> = ({
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            Barre
+            Bars
           </button>
           <button
             type="button"
@@ -400,7 +378,7 @@ export const FrequencyVisualizer: React.FC<FrequencyVisualizerProps> = ({
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            Onda
+            Wave
           </button>
         </div>
       </div>
@@ -417,7 +395,7 @@ export const FrequencyVisualizer: React.FC<FrequencyVisualizerProps> = ({
           <div className="absolute inset-0 pointer-events-none flex items-center justify-center bg-slate-950/20 backdrop-blur-[0.5px]">
             <span className="text-[10px] text-slate-500 font-mono tracking-wide flex items-center gap-1">
               <Radio className="w-3 h-3 text-slate-600" />
-              Avvia riproduzione frammento per attivare il visualizzatore
+              Start snippet playback to activate visualizer
             </span>
           </div>
         )}
