@@ -28,7 +28,7 @@ import {
   buildFetchUrl,
 } from '../utils/audioUtils';
 import { globalAudioManager } from '../utils/audioPlaybackManager';
-import { FrequencyVisualizer } from './FrequencyVisualizer';
+
 import { MultiSegmentStudio } from './MultiSegmentStudio';
 
 
@@ -1046,13 +1046,7 @@ export const AudioTrimmer: React.FC<AudioTrimmerProps> = ({
             </div>
           </div>
 
-          {/* REAL-TIME AUDIO FREQUENCY VISUALIZER (CANVAS API) */}
-          <FrequencyVisualizer
-            isPlaying={isPlaying}
-            mediaElement={mediaElement}
-            audioBuffer={audioBufferRef.current}
-            bpm={rhythm?.bpm || 120}
-          />
+
         </div>
 
         {/* ACTION BUTTONS: SAVE & EXPORT MP3 */}
