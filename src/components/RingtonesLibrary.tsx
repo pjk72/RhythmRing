@@ -20,6 +20,7 @@ import {
   bufferToAudioBlob,
   createSynthAudioBuffer,
   downloadBlobAsFile,
+  fetchAudioBuffer,
 } from '../utils/audioUtils';
 import { globalAudioManager } from '../utils/audioPlaybackManager';
 import { CallSimulatorModal } from './CallSimulatorModal';
@@ -49,9 +50,14 @@ export const RingtonesLibrary: React.FC<RingtonesLibraryProps> = ({
 
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const activeBlobUrlRef = useRef<string | null>(null);
+  const timerRef = useRef<number | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
 
   const stopCurrentAudio = () => {
+    if (timerRef.current) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
     if (activeAudioRef.current) {
       try {
         activeAudioRef.current.pause();
@@ -84,7 +90,7 @@ export const RingtonesLibrary: React.FC<RingtonesLibraryProps> = ({
   if (!isOpen) return null;
 
   const togglePlayRingtone = async (ringtone: SavedRingtone) => {
-    if (playingId === ringtone.id || loadingId === ringtone.id) {
+    if (playingId === ringtone.id) {
       stopCurrentAudio();
       return;
     }
@@ -92,66 +98,138 @@ export const RingtonesLibrary: React.FC<RingtonesLibraryProps> = ({
     stopCurrentAudio();
     setLoadingId(ringtone.id);
 
-    try {
-      if (!audioCtxRef.current) {
-        audioCtxRef.current = new (window.AudioContext ||
-          (window as any).webkitAudioContext)();
-      }
-      const ctx = audioCtxRef.current;
-      if (ctx.state === 'suspended') {
-        await ctx.resume();
-      }
+    const { startTime = 0, endTime = 30, fadeInSec = 0, fadeOutSec = 0 } = ringtone;
 
-      let audioBuffer: AudioBuffer | null = null;
+    const getGain = (curr: number) => {
+      const rel = curr - startTime;
+      const rem = endTime - curr;
+      let gain = 1.0;
+      if (fadeInSec > 0 && rel >= 0 && rel < fadeInSec) {
+        gain = Math.min(gain, Math.max(0.05, rel / fadeInSec));
+      }
+      if (fadeOutSec > 0 && rem >= 0 && rem < fadeOutSec) {
+        gain = Math.min(gain, Math.max(0.05, rem / fadeOutSec));
+      }
+      return Math.max(0.05, Math.min(1.0, gain));
+    };
 
-      if (ringtone.previewUrl) {
-        try {
-          const resp = await fetch(ringtone.previewUrl);
-          if (resp.ok) {
-            const arrayBuf = await resp.arrayBuffer();
-            audioBuffer = await ctx.decodeAudioData(arrayBuf);
-          }
-        } catch (fetchErr) {
-          console.warn('Impossibile caricare audio dal previewUrl, uso sintetizzatore:', fetchErr);
+    const playSynthSnippet = () => {
+      try {
+        if (!audioCtxRef.current) {
+          audioCtxRef.current = new (window.AudioContext ||
+            (window as any).webkitAudioContext)();
         }
+        const ctx = audioCtxRef.current;
+        const synthBuf = createSynthAudioBuffer(ctx, ringtone.bpm || 120, 30);
+        const blob = bufferToAudioBlob(
+          synthBuf,
+          startTime,
+          endTime,
+          fadeInSec,
+          fadeOutSec
+        );
+        const url = URL.createObjectURL(blob);
+        activeBlobUrlRef.current = url;
+
+        const audio = new Audio(url);
+        activeAudioRef.current = audio;
+
+        audio.onended = () => {
+          stopCurrentAudio();
+        };
+
+        audio.onerror = () => {
+          stopCurrentAudio();
+        };
+
+        globalAudioManager.play('ringtone-library', () => {
+          stopCurrentAudio();
+        });
+
+        audio.play().then(() => {
+          setLoadingId(null);
+          setPlayingId(ringtone.id);
+        }).catch(() => stopCurrentAudio());
+      } catch (err) {
+        console.error('Errore synth suoneria:', err);
+        stopCurrentAudio();
       }
+    };
 
-      if (!audioBuffer) {
-        audioBuffer = createSynthAudioBuffer(ctx, ringtone.bpm || 120, 30);
-      }
+    const audioUrl = ringtone.previewUrl || ringtone.audioBlobUrl;
 
-      const blob = bufferToAudioBlob(
-        audioBuffer,
-        ringtone.startTime,
-        ringtone.endTime,
-        ringtone.fadeInSec || 0,
-        ringtone.fadeOutSec || 0
-      );
-      const url = URL.createObjectURL(blob);
-      activeBlobUrlRef.current = url;
-
-      const audio = new Audio(url);
+    if (audioUrl) {
+      const audio = new Audio();
       activeAudioRef.current = audio;
+      audio.preload = 'auto';
+      audio.src = audioUrl;
+
+      const setupInterval = () => {
+        if (timerRef.current) clearInterval(timerRef.current);
+        timerRef.current = window.setInterval(() => {
+          if (!activeAudioRef.current) {
+            if (timerRef.current) clearInterval(timerRef.current);
+            return;
+          }
+          const ct = activeAudioRef.current.currentTime;
+          if (ct >= endTime || (activeAudioRef.current.duration && ct >= activeAudioRef.current.duration)) {
+            stopCurrentAudio();
+          } else {
+            try {
+              activeAudioRef.current.volume = getGain(ct);
+            } catch (e) {}
+          }
+        }, 25);
+      };
+
+      audio.onloadedmetadata = () => {
+        if (startTime > 0) {
+          try {
+            audio.currentTime = startTime;
+          } catch (e) {}
+        }
+      };
+
+      audio.oncanplay = () => {
+        if (startTime > 0 && Math.abs(audio.currentTime - startTime) > 0.5) {
+          try {
+            audio.currentTime = startTime;
+          } catch (e) {}
+        }
+      };
 
       audio.onended = () => {
         stopCurrentAudio();
       };
 
       audio.onerror = (e) => {
-        console.error('Errore riproduzione elemento Audio:', e);
-        stopCurrentAudio();
+        console.warn('Audio tag error, fallback to synth:', e);
+        playSynthSnippet();
       };
 
       globalAudioManager.play('ringtone-library', () => {
         stopCurrentAudio();
       });
 
-      await audio.play();
-      setLoadingId(null);
-      setPlayingId(ringtone.id);
-    } catch (err) {
-      console.error('Errore durante la riproduzione della suoneria:', err);
-      stopCurrentAudio();
+      try {
+        if (startTime > 0) {
+          try {
+            audio.currentTime = startTime;
+          } catch (e) {}
+        }
+        audio.volume = fadeInSec > 0 ? 0.05 : 1.0;
+        await audio.play();
+        setLoadingId(null);
+        setPlayingId(ringtone.id);
+        setupInterval();
+      } catch (err: any) {
+        console.warn('Play attempt failed, waiting for canplay or falling back:', err);
+        if (err?.name !== 'AbortError') {
+          playSynthSnippet();
+        }
+      }
+    } else {
+      playSynthSnippet();
     }
   };
 
@@ -164,16 +242,8 @@ export const RingtonesLibrary: React.FC<RingtonesLibraryProps> = ({
       const ctx = audioCtxRef.current;
       let buf: AudioBuffer | null = null;
 
-      if (ringtone.previewUrl) {
-        try {
-          const resp = await fetch(ringtone.previewUrl);
-          if (resp.ok) {
-            const arrayBuf = await resp.arrayBuffer();
-            buf = await ctx.decodeAudioData(arrayBuf);
-          }
-        } catch (e) {
-          console.warn('Download fallback a sintetizzatore:', e);
-        }
+      if (ringtone.previewUrl || ringtone.audioBlobUrl) {
+        buf = await fetchAudioBuffer(ringtone.previewUrl || ringtone.audioBlobUrl!, ctx);
       }
 
       if (!buf) {
@@ -193,12 +263,14 @@ export const RingtonesLibrary: React.FC<RingtonesLibraryProps> = ({
         ringtone.fadeInSec || ringtone.fadeOutSec
           ? `_Fade[In${ringtone.fadeInSec || 0}s-Out${ringtone.fadeOutSec || 0}s]`
           : '';
+      const filename = `${safeArtist}_-_${safeTitle}_[Ringtone_${Math.round(ringtone.startTime)}-${Math.round(ringtone.endTime)}s${fadeTag}].mp3`;
+
       downloadBlobAsFile(
         blob,
-        `${safeArtist}_-_${safeTitle}_[Suoneria_${Math.round(ringtone.startTime)}-${Math.round(ringtone.endTime)}s${fadeTag}].mp3`
+        filename
       );
     } catch (err) {
-      console.error('Errore durante il download:', err);
+      console.error('Download error:', err);
     }
   };
 
@@ -212,16 +284,8 @@ export const RingtonesLibrary: React.FC<RingtonesLibraryProps> = ({
       const ctx = audioCtxRef.current;
       let buf: AudioBuffer | null = null;
 
-      if (ringtone.previewUrl) {
-        try {
-          const resp = await fetch(ringtone.previewUrl);
-          if (resp.ok) {
-            const arrayBuf = await resp.arrayBuffer();
-            buf = await ctx.decodeAudioData(arrayBuf);
-          }
-        } catch (e) {
-          console.warn('Share fallback a sintetizzatore:', e);
-        }
+      if (ringtone.previewUrl || ringtone.audioBlobUrl) {
+        buf = await fetchAudioBuffer(ringtone.previewUrl || ringtone.audioBlobUrl!, ctx);
       }
 
       if (!buf) {
@@ -242,12 +306,12 @@ export const RingtonesLibrary: React.FC<RingtonesLibraryProps> = ({
         ringtone.fadeInSec || ringtone.fadeOutSec
           ? `_Fade[In${ringtone.fadeInSec || 0}s-Out${ringtone.fadeOutSec || 0}s]`
           : '';
-      const filename = `${safeArtist}_-_${safeTitle}_[Suoneria_${Math.round(ringtone.startTime)}-${Math.round(ringtone.endTime)}s${fadeTag}].mp3`;
+      const filename = `${safeArtist}_-_${safeTitle}_[Ringtone_${Math.round(ringtone.startTime)}-${Math.round(ringtone.endTime)}s${fadeTag}].mp3`;
 
       const file = new File([blob], filename, { type: 'audio/mp3' });
       const shareData = {
-        title: `${ringtone.title} - ${ringtone.artist} (Suoneria)`,
-        text: `Ascolta e salva la suoneria di "${ringtone.title}" (${ringtone.startTime}s - ${ringtone.endTime}s)!`,
+        title: `${ringtone.title} - ${ringtone.artist} (Ringtone)`,
+        text: `Listen to and save the ringtone for "${ringtone.title}" (${ringtone.startTime}s - ${ringtone.endTime}s)!`,
       };
 
       // Use Web Share API with files if supported
@@ -256,29 +320,29 @@ export const RingtonesLibrary: React.FC<RingtonesLibraryProps> = ({
           ...shareData,
           files: [file],
         });
-        setShareFeedback({ id: ringtone.id, message: 'Suoneria condivisa!' });
+        setShareFeedback({ id: ringtone.id, message: 'Ringtone shared!' });
       } else if (navigator.share) {
         // Fallback: Web Share API without files
         await navigator.share({
           ...shareData,
           url: window.location.href,
         });
-        setShareFeedback({ id: ringtone.id, message: 'Dettagli condivisi!' });
+        setShareFeedback({ id: ringtone.id, message: 'Details shared!' });
       } else {
         // Fallback if Web Share API is not supported on this device/browser
         if (navigator.clipboard && navigator.clipboard.writeText) {
           await navigator.clipboard.writeText(
-            `🎵 Suoneria: ${ringtone.title} - ${ringtone.artist} (${ringtone.startTime}s - ${ringtone.endTime}s)\nCreata con Studio Suonerie: ${window.location.href}`
+            `🎵 Ringtone: ${ringtone.title} - ${ringtone.artist} (${ringtone.startTime}s - ${ringtone.endTime}s)\nCreated with RhythmRing: ${window.location.href}`
           );
-          setShareFeedback({ id: ringtone.id, message: 'Copiato negli appunti!' });
+          setShareFeedback({ id: ringtone.id, message: 'Copied to clipboard!' });
         } else {
-          setShareFeedback({ id: ringtone.id, message: 'Web Share non supportato' });
+          setShareFeedback({ id: ringtone.id, message: 'Web Share not supported' });
         }
       }
     } catch (err: any) {
       if (err?.name !== 'AbortError') {
-        console.error('Errore durante la condivisione:', err);
-        setShareFeedback({ id: ringtone.id, message: 'Errore condivisione' });
+        console.error('Sharing error:', err);
+        setShareFeedback({ id: ringtone.id, message: 'Share error' });
       }
     } finally {
       setSharingId(null);
@@ -300,10 +364,10 @@ export const RingtonesLibrary: React.FC<RingtonesLibraryProps> = ({
               </div>
               <div>
                 <h2 className="text-slate-100 font-bold text-lg">
-                  Libreria Suonerie Personalizzate
+                  Custom Ringtones Library
                 </h2>
                 <p className="text-xs text-slate-400">
-                  {ringtones.length} frammenti MP3 salvati
+                  {ringtones.length} saved MP3 ringtones
                 </p>
               </div>
             </div>
@@ -322,9 +386,9 @@ export const RingtonesLibrary: React.FC<RingtonesLibraryProps> = ({
             {ringtones.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400">
                 <Music className="w-12 h-12 text-slate-600 mb-3" />
-                <h3 className="text-slate-200 font-bold text-base">Nessuna suoneria salvata</h3>
+                <h3 className="text-slate-200 font-bold text-base">No saved ringtones</h3>
                 <p className="text-xs text-slate-400 mt-1 max-w-xs">
-                  Cerca una canzone, taglia il tuo frammento preferito e premi "Salva Come Suoneria" per vederlo qui!
+                  Search for a song, trim your favorite snippet, and click "Save as Ringtone" to see it here!
                 </p>
               </div>
             ) : (
@@ -359,7 +423,7 @@ export const RingtonesLibrary: React.FC<RingtonesLibraryProps> = ({
                           </h4>
                           {isActive && (
                             <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-950 px-2 py-0.5 rounded-full border border-emerald-800">
-                              <CheckCircle2 className="w-3 h-3" /> Attiva
+                              <CheckCircle2 className="w-3 h-3" /> Active
                             </span>
                           )}
                         </div>
@@ -385,7 +449,7 @@ export const RingtonesLibrary: React.FC<RingtonesLibraryProps> = ({
                         type="button"
                         onClick={() => onDeleteRingtone(ringtone.id)}
                         className="p-2 text-slate-500 hover:text-rose-400 transition-colors"
-                        title="Elimina suoneria"
+                        title="Delete ringtone"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -403,17 +467,17 @@ export const RingtonesLibrary: React.FC<RingtonesLibraryProps> = ({
                           {isLoading ? (
                             <>
                               <Loader2 className="w-3.5 h-3.5 text-indigo-400 animate-spin" />
-                              <span>Caricamento...</span>
+                              <span>Loading...</span>
                             </>
                           ) : isPlaying ? (
                             <>
                               <Pause className="w-3.5 h-3.5 text-rose-400" />
-                              <span>Pausa</span>
+                              <span>Pause</span>
                             </>
                           ) : (
                             <>
                               <Play className="w-3.5 h-3.5 text-emerald-400" />
-                              <span>Ascolta MP3</span>
+                              <span>Play MP3</span>
                             </>
                           )}
                         </button>
@@ -428,7 +492,7 @@ export const RingtonesLibrary: React.FC<RingtonesLibraryProps> = ({
                               : 'bg-slate-900 text-slate-300 hover:bg-indigo-900 border border-slate-700'
                           }`}
                         >
-                          {isActive ? 'Suoneria Predefinita' : 'Imposta Predefinita'}
+                          {isActive ? 'Default Ringtone' : 'Set as Default'}
                         </button>
                       </div>
 
@@ -440,14 +504,14 @@ export const RingtonesLibrary: React.FC<RingtonesLibraryProps> = ({
                           onClick={() => handleShare(ringtone)}
                           disabled={sharingId === ringtone.id}
                           className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-700 text-slate-300 hover:text-indigo-300 rounded-lg border border-slate-700 transition-all font-medium disabled:opacity-50"
-                          title="Condividi file suoneria con altri"
+                          title="Share ringtone file with others"
                         >
                           {sharingId === ringtone.id ? (
                             <Loader2 className="w-3.5 h-3.5 text-indigo-400 animate-spin" />
                           ) : (
                             <Share2 className="w-3.5 h-3.5 text-indigo-400" />
                           )}
-                          <span>Condividi</span>
+                          <span>Share</span>
                         </button>
 
                         {/* Simulate Call */}
@@ -456,10 +520,10 @@ export const RingtonesLibrary: React.FC<RingtonesLibraryProps> = ({
                           type="button"
                           onClick={() => setSimulatorRingtone(ringtone)}
                           className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 rounded-lg font-semibold"
-                          title="Simula chiamata in arrivo con questa suoneria"
+                          title="Simulate incoming call with this ringtone"
                         >
                           <PhoneCall className="w-3.5 h-3.5 text-emerald-400" />
-                          <span>Test Chiamata</span>
+                          <span>Test Call</span>
                         </button>
 
                         {/* Download MP3 */}
@@ -468,7 +532,7 @@ export const RingtonesLibrary: React.FC<RingtonesLibraryProps> = ({
                           type="button"
                           onClick={() => handleDownload(ringtone)}
                           className="p-1.5 bg-slate-900 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700"
-                          title="Scarica File MP3"
+                          title="Download MP3 File"
                         >
                           <Download className="w-4 h-4 text-cyan-400" />
                         </button>
@@ -491,14 +555,14 @@ export const RingtonesLibrary: React.FC<RingtonesLibraryProps> = ({
             <div className="mt-6 p-4 bg-slate-950 border border-slate-800 rounded-2xl text-xs text-slate-300 space-y-2">
               <div className="flex items-center gap-2 text-indigo-400 font-bold">
                 <Smartphone className="w-4 h-4" />
-                <span>Come impostare l'MP3 come Suoneria sul telefono:</span>
+                <span>How to set the MP3 as a Ringtone on your phone:</span>
               </div>
               <ul className="list-disc list-inside space-y-1 text-slate-400 pl-1">
                 <li>
-                  <strong className="text-slate-200">Android:</strong> Scarica l'MP3, apri Impostazioni &gt; Suoni e vibrazione &gt; Suoneria &gt; Aggiungi da dispositivo (+).
+                  <strong className="text-slate-200">Android:</strong> Download the MP3, open Settings &gt; Sounds & vibration &gt; Ringtone &gt; Add from device (+).
                 </li>
                 <li>
-                  <strong className="text-slate-200">iPhone / iOS:</strong> Scarica l'MP3 e importalo tramite GarageBand o iTunes per impostarlo come suoneria m4r.
+                  <strong className="text-slate-200">iPhone / iOS:</strong> Download the MP3 and import via GarageBand or iTunes to set as custom ringtone.
                 </li>
               </ul>
             </div>

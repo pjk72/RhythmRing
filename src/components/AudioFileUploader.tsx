@@ -41,6 +41,9 @@ export const AudioFileUploader: React.FC<AudioFileUploaderProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Drag counter to prevent flickering on child elements
+  const dragCounterRef = useRef<number>(0);
+
   const handleProcessFiles = async (files: FileList | File[]) => {
     if (!files || files.length === 0) return;
 
@@ -50,16 +53,17 @@ export const AudioFileUploader: React.FC<AudioFileUploaderProps> = ({
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        setProcessingStatus(`Decodifica di "${file.name}" (${formatBytes(file.size)})...`);
+        setProcessingStatus(`Decoding "${file.name}" (${formatBytes(file.size)})...`);
 
-        // Check if file is audio or has audio extension
+        // Check if file is audio or has common audio extension
         const isAudio =
           file.type.startsWith('audio/') ||
-          /\.(mp3|wav|ogg|m4a|aac|flac|webm|opus|wma|aiff|alac)$/i.test(file.name);
+          file.type.includes('audio') ||
+          /\.(mp3|wav|ogg|m4a|aac|flac|webm|opus|wma|aiff|alac|caf|m4r|mid|midi|mp4)$/i.test(file.name);
 
         if (!isAudio) {
           throw new Error(
-            `Il file "${file.name}" non sembra essere un file audio compatibile. Seleziona file MP3, WAV, M4A, AAC, OGG o FLAC.`
+            `The file "${file.name}" is not a supported audio file. Please select MP3, WAV, M4A, AAC, OGG, or FLAC files.`
           );
         }
 
@@ -67,8 +71,8 @@ export const AudioFileUploader: React.FC<AudioFileUploaderProps> = ({
         onTrackUploaded(newTrack);
       }
     } catch (err: any) {
-      console.error('Errore caricamento audio:', err);
-      setErrorMsg(err.message || 'Errore durante il caricamento e la decodifica del file audio.');
+      console.error('Audio upload error:', err);
+      setErrorMsg(err.message || 'Error uploading and decoding audio file.');
     } finally {
       setIsProcessing(false);
       setProcessingStatus('');
@@ -78,22 +82,37 @@ export const AudioFileUploader: React.FC<AudioFileUploaderProps> = ({
     }
   };
 
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current++;
+    setIsDragging(true);
+  }, []);
+
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'copy';
+    }
     setIsDragging(true);
   }, []);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setIsDragging(false);
+    dragCounterRef.current--;
+    if (dragCounterRef.current <= 0) {
+      setIsDragging(false);
+      dragCounterRef.current = 0;
+    }
   }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
+    dragCounterRef.current = 0;
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       handleProcessFiles(e.dataTransfer.files);
@@ -112,7 +131,7 @@ export const AudioFileUploader: React.FC<AudioFileUploaderProps> = ({
 
     if (!navigator?.mediaDevices?.getUserMedia) {
       setErrorMsg(
-        'Il tuo browser non supporta la registrazione audio diretta. Prova con Chrome, Safari o Edge, oppure carica un file audio.'
+        'Your browser does not support direct audio recording. Try Chrome, Safari, or Edge, or upload an audio file.'
       );
       return;
     }
@@ -164,7 +183,7 @@ export const AudioFileUploader: React.FC<AudioFileUploaderProps> = ({
 
         const recordedFile = new File(
           [audioBlob],
-          `Registrazione Vocale ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}.${ext}`,
+          `Voice Recording ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}.${ext}`,
           { type: audioBlob.type }
         );
         await handleProcessFiles([recordedFile]);
@@ -178,24 +197,23 @@ export const AudioFileUploader: React.FC<AudioFileUploaderProps> = ({
         setRecordingTimeSec((prev) => prev + 1);
       }, 1000);
     } catch (err: any) {
-      console.error('Accesso microfono negato o errore:', err);
+      console.error('Microphone access denied or error:', err);
       const name = err.name || '';
       if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || err.message?.includes('Permission denied')) {
         setErrorMsg(
-          'Permesso microfono non concesso. Clicca sull\'icona del lucchetto 🔒 nella barra dell\'URL del browser per autorizzare il Microfono, oppure apri l\'app in una nuova scheda.'
+          'Microphone permission denied. Please click the lock icon 🔒 in your browser address bar to allow Microphone access.'
         );
       } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
-        setErrorMsg('Nessun microfono rilevato. Assicurati che un microfono sia collegato al dispositivo.');
+        setErrorMsg('No microphone detected. Please ensure a microphone is connected to your device.');
       } else if (name === 'NotReadableError' || name === 'TrackStartError') {
-        setErrorMsg('Il microfono è attualmente utilizzato da un\'altra applicazione.');
+        setErrorMsg('The microphone is currently in use by another application.');
       } else {
         setErrorMsg(
-          `Impossibile avviare il microfono (${err.message || 'Verifica i permessi del browser'}). Puoi comunque caricare file audio dal pulsante Sfoglia File.`
+          `Unable to access microphone (${err.message || 'Check browser permissions'}). You can still upload audio files using the Browse Files button.`
         );
       }
     }
   };
-
 
   // Stop Recording
   const stopRecording = () => {
@@ -225,17 +243,17 @@ export const AudioFileUploader: React.FC<AudioFileUploaderProps> = ({
           onClick={() => fileInputRef.current?.click()}
           disabled={isProcessing}
           className="flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-pink-600 via-rose-600 to-amber-600 hover:from-pink-500 hover:to-amber-500 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-pink-600/20 active:scale-[0.98] transition-all disabled:opacity-50"
-          title="Carica un file audio dal tuo computer o smartphone"
+          title="Upload an audio file from your computer or smartphone"
         >
           {isProcessing ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin text-white" />
-              <span>Decodifica...</span>
+              <span>Decoding...</span>
             </>
           ) : (
             <>
               <Upload className="w-4 h-4 text-white" />
-              <span>Carica File Audio</span>
+              <span>Upload Audio File</span>
             </>
           )}
         </button>
@@ -248,7 +266,7 @@ export const AudioFileUploader: React.FC<AudioFileUploaderProps> = ({
       <input
         ref={fileInputRef}
         type="file"
-        accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac,.webm,.opus,.aiff"
+        accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac,.webm,.opus,.aiff,.alac,.caf,.m4r,.mp4"
         multiple
         className="hidden"
         onChange={handleFileInputChange}
@@ -256,15 +274,15 @@ export const AudioFileUploader: React.FC<AudioFileUploaderProps> = ({
 
       {/* Main Drag & Drop Zone */}
       <div
+        onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onClick={() => !isProcessing && !isRecording && fileInputRef.current?.click()}
-        className={`relative overflow-hidden cursor-pointer rounded-2xl border-2 border-dashed p-4 sm:p-6 transition-all group ${
-          isDragging
+        className={`relative overflow-hidden cursor-pointer rounded-2xl border-2 border-dashed p-4 sm:p-6 transition-all group ${isDragging
             ? 'border-pink-500 bg-pink-950/40 scale-[1.01] shadow-2xl shadow-pink-500/20'
             : 'border-slate-700/80 hover:border-pink-500/60 bg-gradient-to-br from-slate-900/90 via-slate-950/90 to-indigo-950/40 hover:bg-slate-900/95 shadow-xl'
-        }`}
+          }`}
       >
         {/* Subtle Background Glow */}
         <div className="absolute -top-12 -right-12 w-40 h-40 bg-pink-600/10 rounded-full blur-3xl pointer-events-none group-hover:bg-pink-600/20 transition-all" />
@@ -273,11 +291,10 @@ export const AudioFileUploader: React.FC<AudioFileUploaderProps> = ({
         <div className="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3.5 text-center sm:text-left">
             <div
-              className={`w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center text-white shadow-lg transition-transform group-hover:scale-105 shrink-0 ${
-                isDragging
+              className={`w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center text-white shadow-lg transition-transform group-hover:scale-105 shrink-0 ${isDragging
                   ? 'bg-gradient-to-tr from-pink-500 to-rose-400 animate-bounce'
                   : 'bg-gradient-to-tr from-pink-600 via-rose-500 to-amber-500 shadow-pink-500/20'
-              }`}
+                }`}
             >
               {isProcessing ? (
                 <Loader2 className="w-6 h-6 sm:w-7 sm:h-7 animate-spin" />
@@ -291,16 +308,16 @@ export const AudioFileUploader: React.FC<AudioFileUploaderProps> = ({
             <div className="space-y-1">
               <div className="flex items-center justify-center sm:justify-start gap-2 flex-wrap">
                 <h3 className="text-white font-bold text-sm sm:text-base">
-                  {isDragging ? 'Rilascia il file audio qui!' : 'Carica un Brano dal PC o Telefono'}
+                  {isDragging ? 'Drop audio file here!' : 'Upload a Track from PC or Phone'}
                 </h3>
                 <span className="px-2 py-0.5 rounded-full bg-pink-500/20 text-pink-300 text-[10px] font-extrabold border border-pink-500/30 uppercase tracking-wider">
-                  Trascina & Rilascia
+                  Drag & Drop
                 </span>
               </div>
               <p className="text-xs text-slate-300">
                 {isProcessing
-                  ? processingStatus || 'Elaborazione in corso...'
-                  : 'Supporta MP3, WAV, M4A, AAC, OGG, FLAC, WebM e registrazioni vocali'}
+                  ? processingStatus || 'Processing audio...'
+                  : 'Supports MP3, WAV, M4A, AAC, OGG, FLAC, WebM, and voice recordings'}
               </p>
             </div>
           </div>
@@ -318,7 +335,7 @@ export const AudioFileUploader: React.FC<AudioFileUploaderProps> = ({
               className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-4 py-2.5 bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-pink-600/25 active:scale-95 transition-all disabled:opacity-50"
             >
               <Upload className="w-4 h-4" />
-              <span>Sfoglia File</span>
+              <span>Browse Files</span>
             </button>
 
             {/* Microphone live recorder */}
@@ -329,7 +346,7 @@ export const AudioFileUploader: React.FC<AudioFileUploaderProps> = ({
                 className="flex items-center gap-1.5 px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs sm:text-sm font-bold animate-pulse shadow-md shadow-rose-600/30 active:scale-95 transition-all"
               >
                 <MicOff className="w-4 h-4" />
-                <span>Ferma ({recordingTimeSec}s)</span>
+                <span>Stop ({recordingTimeSec}s)</span>
               </button>
             ) : (
               <button
@@ -337,10 +354,10 @@ export const AudioFileUploader: React.FC<AudioFileUploaderProps> = ({
                 onClick={startRecording}
                 disabled={isProcessing}
                 className="flex items-center gap-1.5 px-3.5 py-2.5 bg-slate-800/90 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 rounded-xl text-xs sm:text-sm font-semibold transition-all active:scale-95 disabled:opacity-50"
-                title="Registra un messaggio vocale con il microfono"
+                title="Record a voice note with microphone"
               >
                 <Mic className="w-4 h-4 text-rose-400" />
-                <span className="hidden md:inline">Registra Voce</span>
+                <span className="hidden md:inline">Record Voice</span>
               </button>
             )}
           </div>
@@ -359,7 +376,7 @@ export const AudioFileUploader: React.FC<AudioFileUploaderProps> = ({
             </span>
           </div>
           <span className="text-slate-400 font-mono">
-            Durata completa e senza limiti di grandezza
+            Full duration with no size limits
           </span>
         </div>
       </div>
@@ -376,7 +393,7 @@ export const AudioFileUploader: React.FC<AudioFileUploaderProps> = ({
             onClick={() => setErrorMsg(null)}
             className="text-rose-400 hover:text-rose-200 text-xs font-bold"
           >
-            Chiudi
+            Close
           </button>
         </div>
       )}

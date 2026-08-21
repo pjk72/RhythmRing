@@ -41,7 +41,7 @@ interface GenreCategory {
 const MUSIC_GENRE_CATEGORIES: GenreCategory[] = [
   {
     id: 'pop',
-    name: 'Pop & Hit Mondiali',
+    name: 'Pop & Global Hits',
     shortLabel: 'Pop & Mainstream',
     icon: Sparkles,
     badge: 'Pop',
@@ -62,7 +62,7 @@ const MUSIC_GENRE_CATEGORIES: GenreCategory[] = [
   },
   {
     id: 'rock',
-    name: 'Rock, Alternative & Indie Rock',
+    name: 'Rock, Alternative & Indie',
     shortLabel: 'Rock & Alternative',
     icon: Flame,
     badge: 'Rock',
@@ -188,7 +188,7 @@ const MUSIC_GENRE_CATEGORIES: GenreCategory[] = [
   },
   {
     id: 'indie',
-    name: 'Indie Pop, Folk & Cantautorato',
+    name: 'Indie Pop, Folk & Singer-Songwriter',
     shortLabel: 'Indie & Folk',
     icon: Headphones,
     badge: 'Indie',
@@ -209,7 +209,7 @@ const MUSIC_GENRE_CATEGORIES: GenreCategory[] = [
   },
   {
     id: 'soundtrack',
-    name: 'Colonne Sonore, Cinema & Orchestrale',
+    name: 'Soundtracks, Cinema & Orchestral',
     shortLabel: 'Soundtrack & Cinema',
     icon: Film,
     badge: 'Cinema',
@@ -241,7 +241,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
     MUSIC_GENRE_CATEGORIES[0].fallbackArtists
   );
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
-  const [lastVerifiedTime, setLastVerifiedTime] = useState<string>('Tempo reale');
+  const [lastVerifiedTime, setLastVerifiedTime] = useState<string>('Real-time');
   const [isVerifiedLive, setIsVerifiedLive] = useState<boolean>(false);
 
   const currentCategory =
@@ -306,7 +306,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Cerca brano o artista (es. Sabrina Carpenter, Billie Eilish, Coldplay, Kendrick Lamar)..."
+            placeholder="Search song or artist (e.g. Sabrina Carpenter, Billie Eilish, Coldplay, Kendrick Lamar)..."
             className="w-full bg-slate-950/80 text-slate-100 placeholder-slate-400 pl-11 pr-10 py-3 rounded-xl border border-slate-700/80 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 text-sm sm:text-base font-medium transition-all shadow-inner"
           />
           {query && (
@@ -329,25 +329,25 @@ export const SearchBar: React.FC<SearchBarProps> = ({
           {isLoading ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin text-indigo-200" />
-              <span>Cerca...</span>
+              <span>Searching...</span>
             </>
           ) : (
             <>
               <Music2 className="w-4 h-4" />
-              <span>Cerca Brani</span>
+              <span>Search Songs</span>
             </>
           )}
         </button>
       </form>
 
-      {/* CLASSIFICHE DINAMICHE PER GENERE MUSICALE */}
+      {/* DYNAMIC CHARTS BY MUSIC GENRE */}
       <div className="pt-2 border-t border-slate-800/80 flex flex-col gap-3">
         {/* Genre Selector Tabs */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 sm:pb-0 scrollbar-none">
             <span className="text-slate-400 text-xs font-semibold flex items-center gap-1 mr-1 shrink-0">
               <Trophy className="w-3.5 h-3.5 text-amber-400" />
-              <span>Generi:</span>
+              <span>Genres:</span>
             </span>
 
             {MUSIC_GENRE_CATEGORIES.map((cat) => {
@@ -386,18 +386,18 @@ export const SearchBar: React.FC<SearchBarProps> = ({
               type="button"
               onClick={() => verifyGenreChart(currentCategory)}
               disabled={isVerifying}
-              title="Riverifica la classifica in tempo reale dal database iTunes/Apple Music"
+              title="Re-verify chart in real-time from iTunes/Apple Music database"
               className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-950/80 hover:bg-slate-800 text-slate-300 hover:text-white rounded-lg border border-white/10 text-xs font-medium transition-all active:scale-95 shadow-xs"
             >
               <RefreshCw className={`w-3 h-3 text-indigo-400 ${isVerifying ? 'animate-spin' : ''}`} />
               <span className="text-[11px]">
-                {isVerifying ? 'Verifica in corso...' : 'Verifica Classifica'}
+                {isVerifying ? 'Verifying...' : 'Verify Chart'}
               </span>
             </button>
 
             {totalResults > 0 && (
               <span className="text-slate-400 text-xs font-semibold bg-slate-950/80 px-2.5 py-1 rounded-md border border-slate-800">
-                {totalResults} Risultati
+                {totalResults} Results
               </span>
             )}
           </div>
@@ -408,19 +408,19 @@ export const SearchBar: React.FC<SearchBarProps> = ({
           <div className="flex items-center gap-1.5">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
             <span>
-              Classifica <span className="text-indigo-300 font-semibold">{currentCategory.name}</span> verificata in tempo reale
+              Live chart for <span className="text-indigo-300 font-semibold">{currentCategory.name}</span> verified in real-time
             </span>
           </div>
 
           <div className="flex items-center gap-3">
-            <span>Aggiornato: <span className="font-mono text-slate-300">{lastVerifiedTime}</span></span>
+            <span>Updated: <span className="font-mono text-slate-300">{lastVerifiedTime}</span></span>
             <button
               type="button"
               onClick={handleExploreGenre}
               className="text-indigo-400 hover:text-indigo-300 font-semibold underline underline-offset-2 flex items-center gap-1"
             >
               <Layers className="w-3 h-3" />
-              <span>Esplora tutti i brani {currentCategory.badge}</span>
+              <span>Explore all {currentCategory.badge} tracks</span>
             </button>
           </div>
         </div>

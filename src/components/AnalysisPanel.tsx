@@ -23,10 +23,13 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
 
   const getEnergyPercentage = (energy: string) => {
     switch (energy) {
+      case 'Very High':
       case 'Molto Alta':
         return 95;
+      case 'High':
       case 'Alta':
         return 75;
+      case 'Medium':
       case 'Media':
         return 50;
       default:
@@ -42,10 +45,10 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
       <div className="flex items-center justify-between text-xs text-slate-400">
         <div className="flex items-center gap-1.5 font-semibold text-slate-300">
           <Activity className="w-3.5 h-3.5 text-indigo-400" />
-          <span>Analisi Ritmo & Tonalità</span>
+          <span>Rhythm & Key Analysis</span>
         </div>
         <span className="text-[10px] font-mono text-indigo-400/90 bg-indigo-950/60 border border-indigo-800/50 px-2 py-0.5 rounded-full font-medium">
-          Dati Armonici
+          Harmonic Data
         </span>
       </div>
 
@@ -77,7 +80,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           <div className="flex items-center justify-between text-[11px] text-amber-400 font-medium">
             <span className="flex items-center gap-1">
               <Flame className="w-3 h-3 text-amber-400" />
-              Energia
+              Energy
             </span>
             <span className="text-[10px] font-bold text-amber-300">
               {energyPct}%
@@ -101,7 +104,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           <div className="flex items-center justify-between text-[11px] text-indigo-400 font-medium">
             <span className="flex items-center gap-1">
               <Key className="w-3 h-3 text-indigo-400" />
-              Tonalità
+              Key
             </span>
             <span className="text-[9px] font-mono font-bold text-indigo-300 bg-indigo-950/80 border border-indigo-800/60 px-1.5 py-0.5 rounded">
               {keyData.camelotKey}
@@ -122,7 +125,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({
           <div className="flex items-center justify-between text-[11px] text-emerald-400 font-medium">
             <span className="flex items-center gap-1">
               <Music2 className="w-3 h-3 text-emerald-400" />
-              Genere & Anno
+              Genre & Year
             </span>
           </div>
           <div className="mt-1 flex items-baseline justify-between gap-1">

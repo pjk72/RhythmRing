@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Play,
   Pause,
@@ -22,6 +22,11 @@ import {
   Tag,
   Clock,
   SlidersHorizontal,
+  GripVertical,
+  MoveHorizontal,
+  ChevronsLeft,
+  ChevronsRight,
+  ArrowLeftRight,
 } from 'lucide-react';
 import {
   Track,
@@ -64,7 +69,7 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
   const [segments, setSegments] = useState<AudioSegment[]>([
     {
       id: 'seg-1',
-      name: 'Intro / Attacco',
+      name: 'Intro / Hook',
       startTime: 0,
       endTime: Math.min(8, audioDuration || 30),
       fadeInSec: 0.5,
@@ -75,7 +80,7 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
     },
     {
       id: 'seg-2',
-      name: 'Ritornello / Drop',
+      name: 'Chorus / Drop',
       startTime: Math.min(8, (audioDuration || 30) * 0.4),
       endTime: Math.min(20, (audioDuration || 30) * 0.8),
       fadeInSec: 0.5,
@@ -110,6 +115,30 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
   const playbackStartTimeRef = useRef<number>(0);
   const currentPlayingDurationRef = useRef<number>(0);
 
+  // Timeline Interactive Drag & Resize State
+  const [activeDrag, setActiveDrag] = useState<{
+    segmentId: string;
+    type: 'move' | 'resize-start' | 'resize-end';
+    startTime: number;
+    endTime: number;
+  } | null>(null);
+  const [hoveredTime, setHoveredTime] = useState<number | null>(null);
+
+  const timelineTrackRef = useRef<HTMLDivElement | null>(null);
+  const dragInteractionRef = useRef<{
+    segmentId: string;
+    type: 'move' | 'resize-start' | 'resize-end';
+    startX: number;
+    initialStart: number;
+    initialEnd: number;
+    trackWidth: number;
+  } | null>(null);
+  const segmentsRef = useRef<AudioSegment[]>(segments);
+
+  useEffect(() => {
+    segmentsRef.current = segments;
+  }, [segments]);
+
   // Stop any active Web Audio playback
   const stopPlayback = () => {
     if (activeAudioSourceRef.current) {
@@ -137,10 +166,159 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
   const activeSegment = segments.find((s) => s.id === activeSegmentId) || segments[0];
 
   // Update specific field in a segment
-  const updateSegment = (id: string, updates: Partial<AudioSegment>) => {
+  const updateSegment = useCallback((id: string, updates: Partial<AudioSegment>) => {
     setSegments((prev) =>
       prev.map((s) => (s.id === id ? { ...s, ...updates } : s))
     );
+  }, []);
+
+  // Timeline Drag & Resize Pointer Handlers
+  const handleStartTimelineDrag = (
+    e: React.MouseEvent | React.TouchEvent,
+    seg: AudioSegment,
+    type: 'move' | 'resize-start' | 'resize-end'
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    setActiveSegmentId(seg.id);
+
+    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
+    const trackRect = timelineTrackRef.current?.getBoundingClientRect();
+    const trackWidth = trackRect && trackRect.width > 0 ? trackRect.width : 1;
+
+    dragInteractionRef.current = {
+      segmentId: seg.id,
+      type,
+      startX: clientX,
+      initialStart: seg.startTime,
+      initialEnd: seg.endTime,
+      trackWidth,
+    };
+
+    setActiveDrag({
+      segmentId: seg.id,
+      type,
+      startTime: seg.startTime,
+      endTime: seg.endTime,
+    });
+  };
+
+  useEffect(() => {
+    const handleGlobalPointerMove = (e: MouseEvent | TouchEvent) => {
+      const drag = dragInteractionRef.current;
+      if (!drag || !timelineTrackRef.current) return;
+
+      const clientX = 'touches' in e ? e.touches[0].clientX : (e as MouseEvent).clientX;
+      const deltaX = clientX - drag.startX;
+      const totalDur = audioDuration || 30;
+      const deltaTime = (deltaX / drag.trackWidth) * totalDur;
+
+      if (drag.type === 'move') {
+        const length = drag.initialEnd - drag.initialStart;
+        let newStart = Math.max(0, Math.min(totalDur - length, drag.initialStart + deltaTime));
+        let newEnd = newStart + length;
+
+        newStart = Math.round(newStart * 10) / 10;
+        newEnd = Math.round(newEnd * 10) / 10;
+
+        updateSegment(drag.segmentId, { startTime: newStart, endTime: newEnd });
+        setActiveDrag({
+          segmentId: drag.segmentId,
+          type: 'move',
+          startTime: newStart,
+          endTime: newEnd,
+        });
+      } else if (drag.type === 'resize-start') {
+        let newStart = Math.max(0, Math.min(drag.initialEnd - 0.2, drag.initialStart + deltaTime));
+        newStart = Math.round(newStart * 10) / 10;
+
+        updateSegment(drag.segmentId, { startTime: newStart });
+        setActiveDrag({
+          segmentId: drag.segmentId,
+          type: 'resize-start',
+          startTime: newStart,
+          endTime: drag.initialEnd,
+        });
+      } else if (drag.type === 'resize-end') {
+        let newEnd = Math.max(drag.initialStart + 0.2, Math.min(totalDur, drag.initialEnd + deltaTime));
+        newEnd = Math.round(newEnd * 10) / 10;
+
+        updateSegment(drag.segmentId, { endTime: newEnd });
+        setActiveDrag({
+          segmentId: drag.segmentId,
+          type: 'resize-end',
+          startTime: drag.initialStart,
+          endTime: newEnd,
+        });
+      }
+    };
+
+    const handleGlobalPointerUp = () => {
+      if (dragInteractionRef.current) {
+        dragInteractionRef.current = null;
+        setActiveDrag(null);
+      }
+    };
+
+    window.addEventListener('mousemove', handleGlobalPointerMove, { passive: false });
+    window.addEventListener('mouseup', handleGlobalPointerUp);
+    window.addEventListener('touchmove', handleGlobalPointerMove, { passive: false });
+    window.addEventListener('touchend', handleGlobalPointerUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleGlobalPointerMove);
+      window.removeEventListener('mouseup', handleGlobalPointerUp);
+      window.removeEventListener('touchmove', handleGlobalPointerMove);
+      window.removeEventListener('touchend', handleGlobalPointerUp);
+    };
+  }, [audioDuration, updateSegment]);
+
+  // Click on empty timeline track space to move or set active clip
+  const handleTimelineTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (dragInteractionRef.current || !timelineTrackRef.current) return;
+    const rect = timelineTrackRef.current.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const totalDur = audioDuration || 30;
+    const clickedTime = Math.max(0, Math.min(totalDur, (clickX / rect.width) * totalDur));
+    const roundedTime = Math.round(clickedTime * 10) / 10;
+
+    if (activeSegment) {
+      const len = activeSegment.endTime - activeSegment.startTime;
+      let newStart = Math.min(totalDur - len, roundedTime);
+      let newEnd = Math.min(totalDur, newStart + len);
+      updateSegment(activeSegment.id, {
+        startTime: Math.round(newStart * 10) / 10,
+        endTime: Math.round(newEnd * 10) / 10,
+      });
+    }
+  };
+
+  // Nudge functions for pixel-perfect adjustments
+  const handleNudgeSegment = (
+    segId: string,
+    action: 'start' | 'end' | 'move',
+    delta: number
+  ) => {
+    const seg = segments.find((s) => s.id === segId);
+    if (!seg) return;
+    const totalDur = audioDuration || 30;
+
+    if (action === 'start') {
+      const newStart = Math.max(0, Math.min(seg.endTime - 0.2, seg.startTime + delta));
+      updateSegment(segId, { startTime: Math.round(newStart * 10) / 10 });
+    } else if (action === 'end') {
+      const newEnd = Math.max(seg.startTime + 0.2, Math.min(totalDur, seg.endTime + delta));
+      updateSegment(segId, { endTime: Math.round(newEnd * 10) / 10 });
+    } else if (action === 'move') {
+      const len = seg.endTime - seg.startTime;
+      let newStart = Math.max(0, Math.min(totalDur - len, seg.startTime + delta));
+      let newEnd = newStart + len;
+      updateSegment(segId, {
+        startTime: Math.round(newStart * 10) / 10,
+        endTime: Math.round(newEnd * 10) / 10,
+      });
+    }
   };
 
   // Add new segment
@@ -183,7 +361,7 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
     const duplicated: AudioSegment = {
       ...seg,
       id: newId,
-      name: `${seg.name} (Copia)`,
+      name: `${seg.name} (Copy)`,
       startTime: Math.round(newStart * 10) / 10,
       endTime: Math.round(newEnd * 10) / 10,
     };
@@ -204,7 +382,7 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
 
   // Add marker at current position
   const handleAddMarker = (time: number) => {
-    const label = newMarkerLabel.trim() || `Punto ${markers.length + 1}`;
+    const label = newMarkerLabel.trim() || `Cue ${markers.length + 1}`;
     const newMarker: AudioMarker = {
       id: `mark-${Date.now()}`,
       timeSec: Math.round(time * 10) / 10,
@@ -346,12 +524,12 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
       }
 
       const blob = audioBufferToWavBlob(merged);
-      const safeTitle = (track?.trackName || 'Montaggio_Audio')
+      const safeTitle = (track?.trackName || 'Audio_Montage')
         .replace(/[^a-zA-Z0-9_-]/g, '_')
         .toLowerCase();
-      downloadBlobAsFile(blob, `${safeTitle}_montaggio_${activeSegs.length}clip.wav`);
+      downloadBlobAsFile(blob, `${safeTitle}_montage_${activeSegs.length}clips.wav`);
     } catch (err) {
-      console.error('Errore esportazione montaggio:', err);
+      console.error('Montage export error:', err);
     } finally {
       setIsExportingMerged(false);
     }
@@ -373,7 +551,7 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
         .toLowerCase();
       downloadBlobAsFile(blob, `${safeTitle}.wav`);
     } catch (err) {
-      console.error('Errore esportazione segmento:', err);
+      console.error('Segment export error:', err);
     }
   };
 
@@ -392,7 +570,7 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
       const newRingtone: SavedRingtone = {
         id: `montage-${Date.now()}`,
         trackId: track.trackId,
-        title: `${track.trackName} [Montaggio ${activeSegs.length} Clip]`,
+        title: `${track.trackName} [Montage ${activeSegs.length} Clips]`,
         artist: track.artistName,
         album: track.collectionName,
         artworkUrl: track.artworkUrl600 || track.artworkUrl100,
@@ -401,13 +579,13 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
         durationSec: Math.round(estimatedTotalSec * 10) / 10,
         fadeInSec: segments[0]?.fadeInSec || 0,
         fadeOutSec: segments[segments.length - 1]?.fadeOutSec || 0,
-        createdAt: new Date().toLocaleDateString('it-IT', {
+        createdAt: new Date().toLocaleDateString('en-US', {
           day: '2-digit',
           month: 'short',
           year: 'numeric',
         }),
         bpm: 120,
-        keyNote: 'Montaggio',
+        keyNote: 'Montage',
         audioBlobUrl: blobUrl,
       };
 
@@ -415,7 +593,7 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
       setIsSaved(true);
       setTimeout(() => setIsSaved(false), 3000);
     } catch (err) {
-      console.error('Errore salvataggio montaggio:', err);
+      console.error('Error saving montage:', err);
     }
   };
 
@@ -432,14 +610,14 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h4 className="text-sm font-bold text-white tracking-wide">
-                Montaggio Avanzato & Multi-Segmento
+                Advanced Multi-Segment Studio
               </h4>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                {segments.length} Clip {activeSegs.length !== segments.length && `(${activeSegs.length} attive)`}
+                {segments.length} Clips {activeSegs.length !== segments.length && `(${activeSegs.length} active)`}
               </span>
             </div>
             <p className="text-[11px] text-slate-400">
-              Crea arrangiamenti combinando più parti del brano con dissolvenza incrociata (Crossfade)
+              Create arrangements by combining multiple parts of the song with seamless crossfade
             </p>
           </div>
         </div>
@@ -458,12 +636,12 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
             {isPlayingSequence ? (
               <>
                 <Pause className="w-3.5 h-3.5 fill-current" />
-                <span>Ferma Sequenza</span>
+                <span>Stop Sequence</span>
               </>
             ) : (
               <>
                 <Play className="w-3.5 h-3.5 fill-current" />
-                <span>Ascolta Montaggio ({estimatedTotalSec.toFixed(1)}s)</span>
+                <span>Play Montage ({estimatedTotalSec.toFixed(1)}s)</span>
               </>
             )}
           </button>
@@ -474,45 +652,83 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
             className="flex items-center gap-1 px-3 py-2 rounded-lg font-semibold text-xs bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-indigo-500/30 transition-all active:scale-95"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>Aggiungi Clip</span>
+            <span>Add Clip</span>
           </button>
         </div>
       </div>
 
-      {/* VISUAL ARRANGER TIMELINE (MULTI-TRACK VIEW) */}
-      <div className="bg-slate-950/80 border border-white/10 rounded-xl p-3 flex flex-col gap-2.5 shadow-inner">
-        <div className="flex items-center justify-between text-xs text-slate-400 font-medium px-1">
-          <div className="flex items-center gap-1.5">
-            <Clock className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Timeline Traccia Audio (0.0s - {dur.toFixed(1)}s)</span>
+      {/* VISUAL INTERACTIVE TIMELINE (DRAGGABLE & RESIZABLE CLIPS) */}
+      <div className="bg-slate-950/90 border border-white/10 rounded-2xl p-3 sm:p-4 flex flex-col gap-3 shadow-2xl backdrop-blur-md">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-300 font-medium px-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 font-bold text-white">
+              <Clock className="w-4 h-4 text-indigo-400" />
+              <span>Audio Track Timeline (0.0s - {dur.toFixed(1)}s)</span>
+            </div>
+            <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              <MoveHorizontal className="w-3 h-3" />
+              Drag clips or edges ↔ to adjust start/end
+            </span>
           </div>
-          <span className="text-[11px] font-mono text-indigo-300">
-            Durata Mix Finale: ~{estimatedTotalSec.toFixed(1)}s
-          </span>
+
+          <div className="flex items-center gap-3 text-[11px] font-mono text-indigo-300">
+            {hoveredTime !== null && (
+              <span className="text-slate-400 bg-slate-900 px-2 py-0.5 rounded border border-white/10">
+                Pointer: <strong className="text-white">{hoveredTime.toFixed(1)}s</strong>
+              </span>
+            )}
+            <span>Mix: ~{estimatedTotalSec.toFixed(1)}s</span>
+          </div>
         </div>
 
         {/* Global Progress Bar when playing sequence */}
         {(isPlayingSequence || isPlayingSingle) && (
-          <div className="w-full bg-slate-900 h-1 rounded-full overflow-hidden">
+          <div className="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden">
             <div
-              className="h-full bg-gradient-to-r from-indigo-500 to-pink-500 transition-all duration-75"
+              className="h-full bg-gradient-to-r from-indigo-500 via-rose-500 to-amber-500 transition-all duration-75 shadow-sm"
               style={{ width: `${playbackProgress}%` }}
             />
           </div>
         )}
 
         {/* Multi-Segment Arranger Track Canvas */}
-        <div className="relative h-14 bg-slate-900/90 rounded-lg border border-white/10 overflow-hidden select-none p-1 flex items-center">
-          {/* Background second grid ticks */}
-          <div className="absolute inset-0 flex justify-between pointer-events-none opacity-20 px-2">
-            {Array.from({ length: 7 }).map((_, i) => (
-              <div key={i} className="h-full border-r border-dashed border-white/40 flex flex-col justify-end pb-0.5">
+        <div
+          ref={timelineTrackRef}
+          onClick={handleTimelineTrackClick}
+          onMouseMove={(e) => {
+            if (!timelineTrackRef.current) return;
+            const rect = timelineTrackRef.current.getBoundingClientRect();
+            const pos = Math.max(0, Math.min(dur, ((e.clientX - rect.left) / rect.width) * dur));
+            setHoveredTime(Math.round(pos * 10) / 10);
+          }}
+          onMouseLeave={() => setHoveredTime(null)}
+          className="relative h-20 sm:h-24 bg-gradient-to-b from-slate-900/95 to-slate-950/95 rounded-xl border-2 border-slate-700/60 overflow-hidden select-none p-1.5 flex items-center cursor-crosshair group shadow-inner"
+        >
+          {/* Background grid ticks every 10% / seconds */}
+          <div className="absolute inset-0 flex justify-between pointer-events-none opacity-25 px-2">
+            {Array.from({ length: 9 }).map((_, i) => (
+              <div key={i} className="h-full border-r border-dashed border-white/40 flex flex-col justify-between py-1">
                 <span className="text-[8px] font-mono text-slate-400">
-                  {Math.round((dur / 6) * i)}s
+                  {((dur / 8) * i).toFixed(0)}s
+                </span>
+                <span className="text-[8px] font-mono text-slate-400">
+                  {((dur / 8) * i).toFixed(0)}s
                 </span>
               </div>
             ))}
           </div>
+
+          {/* Hover Time Guide Line */}
+          {hoveredTime !== null && !activeDrag && (
+            <div
+              style={{ left: `${(hoveredTime / dur) * 100}%` }}
+              className="absolute top-0 bottom-0 w-px bg-pink-400/80 pointer-events-none z-30 flex flex-col items-center"
+            >
+              <span className="text-[8px] font-mono bg-pink-600 text-white px-1 rounded shadow -mt-2">
+                {hoveredTime.toFixed(1)}s
+              </span>
+            </div>
+          )}
 
           {/* Cue Markers */}
           {markers.map((marker) => {
@@ -523,7 +739,10 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
                 style={{ left: `${leftPct}%` }}
                 title={`${marker.label} (${marker.timeSec}s)`}
                 className="absolute top-0 bottom-0 z-20 pointer-events-auto flex flex-col items-center group cursor-pointer"
-                onClick={() => handleAddMarker(marker.timeSec)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleAddMarker(marker.timeSec);
+                }}
               >
                 <div
                   className="px-1 py-0.5 rounded text-[8px] font-bold text-white shadow-xs truncate max-w-[60px]"
@@ -544,60 +763,242 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
               Math.min(100 - leftPct, ((seg.endTime - seg.startTime) / dur) * 100)
             );
             const isActive = seg.id === activeSegmentId;
+            const isBeingDragged = activeDrag?.segmentId === seg.id;
 
             return (
               <div
                 key={seg.id}
-                onClick={() => setActiveSegmentId(seg.id)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveSegmentId(seg.id);
+                }}
                 style={{
                   left: `${leftPct}%`,
                   width: `${widthPct}%`,
                 }}
-                className={`absolute top-1 bottom-1 rounded-md transition-all cursor-pointer select-none flex items-center justify-between px-2 text-xs font-semibold shadow-md overflow-hidden z-10 ${
+                className={`absolute top-1.5 bottom-1.5 rounded-xl transition-shadow select-none flex items-center justify-between text-xs font-semibold overflow-visible z-10 group/seg ${
                   seg.isMuted
                     ? 'opacity-40 bg-slate-800 border border-slate-600 text-slate-400 line-through'
                     : isActive
-                    ? 'ring-2 ring-white shadow-lg z-20 text-white'
-                    : 'opacity-90 hover:opacity-100 text-white'
+                    ? 'ring-2 ring-white shadow-2xl z-20 text-white shadow-pink-500/20'
+                    : 'opacity-90 hover:opacity-100 text-white hover:ring-1 hover:ring-white/50'
                 }`}
               >
                 {/* Segment background color tint */}
                 <div
-                  className="absolute inset-0 opacity-80"
+                  className="absolute inset-0 rounded-xl opacity-85 shadow-md"
                   style={{ backgroundColor: seg.color }}
                 />
 
                 {/* Fade In visual indicator */}
                 {seg.fadeInSec > 0 && (
                   <div
-                    className="absolute left-0 top-0 bottom-0 bg-gradient-to-r from-black/40 to-transparent pointer-events-none"
-                    style={{ width: `${Math.min(100, (seg.fadeInSec / (seg.endTime - seg.startTime)) * 100)}%` }}
+                    className="absolute left-0 top-0 bottom-0 bg-gradient-to-r from-black/50 to-transparent pointer-events-none rounded-l-xl"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        (seg.fadeInSec / Math.max(0.1, seg.endTime - seg.startTime)) * 100
+                      )}%`,
+                    }}
                   />
                 )}
 
                 {/* Fade Out visual indicator */}
                 {seg.fadeOutSec > 0 && (
                   <div
-                    className="absolute right-0 top-0 bottom-0 bg-gradient-to-l from-black/40 to-transparent pointer-events-none"
-                    style={{ width: `${Math.min(100, (seg.fadeOutSec / (seg.endTime - seg.startTime)) * 100)}%` }}
+                    className="absolute right-0 top-0 bottom-0 bg-gradient-to-l from-black/50 to-transparent pointer-events-none rounded-r-xl"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        (seg.fadeOutSec / Math.max(0.1, seg.endTime - seg.startTime)) * 100
+                      )}%`,
+                    }}
                   />
                 )}
 
-                {/* Segment Content Label */}
-                <div className="relative z-10 flex items-center gap-1 truncate text-[11px]">
-                  <span className="w-3.5 h-3.5 rounded-full bg-black/40 flex items-center justify-center text-[9px] font-mono shrink-0">
-                    {idx + 1}
-                  </span>
-                  <span className="truncate font-bold">{seg.name}</span>
+                {/* LEFT RESIZE HANDLE (START TIME) */}
+                <div
+                  onMouseDown={(e) => handleStartTimelineDrag(e, seg, 'resize-start')}
+                  onTouchStart={(e) => handleStartTimelineDrag(e, seg, 'resize-start')}
+                  title="Drag to adjust start time"
+                  className={`absolute left-0 top-0 bottom-0 w-3.5 z-30 cursor-ew-resize flex items-center justify-center transition-all rounded-l-xl touch-none ${
+                    isActive
+                      ? 'bg-white/40 hover:bg-white text-slate-900'
+                      : 'bg-black/20 hover:bg-white/50 text-white'
+                  }`}
+                >
+                  <div className="w-1 h-5 bg-white rounded-full shadow-md" />
                 </div>
 
-                <div className="relative z-10 text-[9px] font-mono opacity-90 shrink-0 hidden sm:block">
-                  {(seg.endTime - seg.startTime).toFixed(1)}s
+                {/* CENTER BODY (MOVE ENTIRE CLIP) */}
+                <div
+                  onMouseDown={(e) => handleStartTimelineDrag(e, seg, 'move')}
+                  onTouchStart={(e) => handleStartTimelineDrag(e, seg, 'move')}
+                  title="Drag to move entire clip along track"
+                  className="flex-1 h-full flex items-center justify-between px-3 cursor-grab active:cursor-grabbing z-20 touch-none truncate"
+                >
+                  {/* Segment Content Label */}
+                  <div className="flex items-center gap-1.5 truncate text-[11px]">
+                    <span className="w-4 h-4 rounded-full bg-black/50 flex items-center justify-center text-[9px] font-mono font-bold shrink-0 shadow-xs">
+                      {idx + 1}
+                    </span>
+                    <span className="truncate font-extrabold tracking-wide drop-shadow-sm">
+                      {seg.name}
+                    </span>
+                  </div>
+
+                  <div className="text-[10px] font-mono font-bold bg-black/40 px-1.5 py-0.5 rounded shadow-inner shrink-0 hidden sm:block">
+                    {(seg.endTime - seg.startTime).toFixed(1)}s
+                  </div>
                 </div>
+
+                {/* RIGHT RESIZE HANDLE (END TIME) */}
+                <div
+                  onMouseDown={(e) => handleStartTimelineDrag(e, seg, 'resize-end')}
+                  onTouchStart={(e) => handleStartTimelineDrag(e, seg, 'resize-end')}
+                  title="Drag to adjust end time"
+                  className={`absolute right-0 top-0 bottom-0 w-3.5 z-30 cursor-ew-resize flex items-center justify-center transition-all rounded-r-xl touch-none ${
+                    isActive
+                      ? 'bg-white/40 hover:bg-white text-slate-900'
+                      : 'bg-black/20 hover:bg-white/50 text-white'
+                  }`}
+                >
+                  <div className="w-1 h-5 bg-white rounded-full shadow-md" />
+                </div>
+
+                {/* Floating Active Drag Tooltip */}
+                {(isBeingDragged || isActive) && (
+                  <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-slate-950 text-white border border-white/20 text-[10px] font-mono font-bold px-2 py-0.5 rounded-md shadow-2xl z-40 whitespace-nowrap pointer-events-none flex items-center gap-1.5">
+                    <span className="text-indigo-300">{seg.startTime.toFixed(1)}s</span>
+                    <span>➔</span>
+                    <span className="text-amber-300">{seg.endTime.toFixed(1)}s</span>
+                    <span className="text-slate-400">({(seg.endTime - seg.startTime).toFixed(1)}s)</span>
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
+
+        {/* TIMELINE PRECISION NUDGE BAR (FOR THE ACTIVE CLIP) */}
+        {activeSegment && (
+          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5 pt-2 border-t border-white/10 bg-slate-900/60 rounded-xl p-2.5">
+            <div className="flex items-center gap-2">
+              <div
+                className="w-3.5 h-3.5 rounded-full shrink-0"
+                style={{ backgroundColor: activeSegment.color }}
+              />
+              <span className="text-xs font-bold text-white truncate max-w-[150px]">
+                {activeSegment.name}:
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs">
+              {/* Nudge Start Time */}
+              <div className="flex items-center gap-1 bg-slate-950/80 px-2 py-1 rounded-lg border border-white/10">
+                <span className="text-[11px] text-slate-400 font-semibold">Start:</span>
+                <button
+                  type="button"
+                  onClick={() => handleNudgeSegment(activeSegment.id, 'start', -1)}
+                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-indigo-300 text-[10px] font-mono font-bold transition-all"
+                  title="-1 second"
+                >
+                  -1s
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNudgeSegment(activeSegment.id, 'start', -0.1)}
+                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-indigo-300 text-[10px] font-mono font-bold transition-all"
+                  title="-0.1 seconds"
+                >
+                  -0.1s
+                </button>
+                <span className="font-mono text-indigo-200 font-bold px-1 text-xs">
+                  {activeSegment.startTime.toFixed(1)}s
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleNudgeSegment(activeSegment.id, 'start', 0.1)}
+                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-indigo-300 text-[10px] font-mono font-bold transition-all"
+                  title="+0.1 seconds"
+                >
+                  +0.1s
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNudgeSegment(activeSegment.id, 'start', 1)}
+                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-indigo-300 text-[10px] font-mono font-bold transition-all"
+                  title="+1 second"
+                >
+                  +1s
+                </button>
+              </div>
+
+              {/* Shift entire clip left/right */}
+              <div className="flex items-center gap-1 bg-slate-950/80 px-2 py-1 rounded-lg border border-white/10">
+                <span className="text-[11px] text-slate-400 font-semibold">Move:</span>
+                <button
+                  type="button"
+                  onClick={() => handleNudgeSegment(activeSegment.id, 'move', -0.5)}
+                  className="flex items-center gap-0.5 px-2 py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-500/30 text-indigo-200 text-[10px] font-bold transition-all"
+                  title="Shift entire clip left by 0.5s"
+                >
+                  <ChevronsLeft className="w-3 h-3" />
+                  <span>-0.5s</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNudgeSegment(activeSegment.id, 'move', 0.5)}
+                  className="flex items-center gap-0.5 px-2 py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-500/30 text-indigo-200 text-[10px] font-bold transition-all"
+                  title="Shift entire clip right by 0.5s"
+                >
+                  <span>+0.5s</span>
+                  <ChevronsRight className="w-3 h-3" />
+                </button>
+              </div>
+
+              {/* Nudge End Time */}
+              <div className="flex items-center gap-1 bg-slate-950/80 px-2 py-1 rounded-lg border border-white/10">
+                <span className="text-[11px] text-slate-400 font-semibold">End:</span>
+                <button
+                  type="button"
+                  onClick={() => handleNudgeSegment(activeSegment.id, 'end', -1)}
+                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 text-[10px] font-mono font-bold transition-all"
+                  title="-1 second"
+                >
+                  -1s
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNudgeSegment(activeSegment.id, 'end', -0.1)}
+                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 text-[10px] font-mono font-bold transition-all"
+                  title="-0.1 seconds"
+                >
+                  -0.1s
+                </button>
+                <span className="font-mono text-amber-200 font-bold px-1 text-xs">
+                  {activeSegment.endTime.toFixed(1)}s
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleNudgeSegment(activeSegment.id, 'end', 0.1)}
+                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 text-[10px] font-mono font-bold transition-all"
+                  title="+0.1 seconds"
+                >
+                  +0.1s
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNudgeSegment(activeSegment.id, 'end', 1)}
+                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 text-[10px] font-mono font-bold transition-all"
+                  title="+1 second"
+                >
+                  +1s
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* CLIPS LIST & ACTIVE CLIP EDITOR (SPLIT VIEW) */}
@@ -605,8 +1006,8 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
         {/* Left Col (5 cols): Clips List & Sequence Order */}
         <div className="lg:col-span-5 flex flex-col gap-2 bg-slate-950/60 border border-white/10 rounded-xl p-2.5">
           <div className="flex items-center justify-between text-xs font-semibold px-1 text-slate-300">
-            <span>Sequenza Clip ({segments.length})</span>
-            <span className="text-[10px] text-slate-400">Clicca per modificare</span>
+            <span>Clip Sequence ({segments.length})</span>
+            <span className="text-[10px] text-slate-400">Click to edit</span>
           </div>
 
           <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto pr-1">
@@ -636,7 +1037,7 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
                         </span>
                         {seg.isMuted && (
                           <span className="text-[9px] px-1 bg-rose-950/80 text-rose-300 rounded border border-rose-500/30">
-                            Muto
+                            Muted
                           </span>
                         )}
                       </div>
@@ -652,7 +1053,7 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
                     <button
                       type="button"
                       onClick={() => handlePlaySingleSegment(seg)}
-                      title="Ascolta solo questo segmento"
+                      title="Listen to this clip only"
                       className={`p-1.5 rounded-md border transition-all ${
                         isCurrentlyPlaying
                           ? 'bg-emerald-600 text-white border-emerald-400'
@@ -669,7 +1070,7 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
                     <button
                       type="button"
                       onClick={() => updateSegment(seg.id, { isMuted: !seg.isMuted })}
-                      title={seg.isMuted ? 'Attiva clip nel mix' : 'Silenzia clip nel mix'}
+                      title={seg.isMuted ? 'Unmute clip in mix' : 'Mute clip in mix'}
                       className={`p-1.5 rounded-md border transition-all ${
                         seg.isMuted
                           ? 'bg-rose-950/80 text-rose-300 border-rose-500/40'
@@ -682,7 +1083,7 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
                     <button
                       type="button"
                       onClick={() => handleDuplicateSegment(seg)}
-                      title="Duplica questo segmento"
+                      title="Duplicate this clip"
                       className="p-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 border border-white/10 transition-all"
                     >
                       <Copy className="w-3 h-3" />
@@ -692,7 +1093,7 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
                       <button
                         type="button"
                         onClick={() => handleDeleteSegment(seg.id)}
-                        title="Elimina segmento"
+                        title="Delete clip"
                         className="p-1.5 rounded-md bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-500/30 transition-all"
                       >
                         <Trash2 className="w-3 h-3" />
@@ -710,7 +1111,7 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
           <div className="flex items-center justify-between text-xs font-bold text-white pb-1.5 border-b border-white/10">
             <div className="flex items-center gap-2">
               <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Modifica Clip Selezionata:</span>
+              <span>Edit Selected Clip:</span>
             </div>
             <div className="flex items-center gap-1.5">
               {/* Color Presets */}
@@ -738,7 +1139,7 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
                 type="text"
                 value={activeSegment.name}
                 onChange={(e) => updateSegment(activeSegment.id, { name: e.target.value })}
-                placeholder="Nome clip (es. Intro, Ritornello...)"
+                placeholder="Clip name (e.g. Intro, Chorus...)"
                 className="bg-transparent text-xs font-semibold text-white outline-none w-full"
               />
             </div>
@@ -751,21 +1152,21 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
               {isPlayingSingle === activeSegment.id ? (
                 <>
                   <Pause className="w-3 h-3 fill-current" />
-                  <span>Pausa Clip</span>
+                  <span>Pause Clip</span>
                 </>
               ) : (
                 <>
                   <Play className="w-3 h-3 fill-current" />
-                  <span>Ascolta Clip</span>
+                  <span>Play Clip</span>
                 </>
               )}
             </button>
           </div>
 
-          {/* Interval Sliders (Inizio & Fine) */}
+          {/* Interval Sliders (Start & End) */}
           <div className="bg-slate-900/80 rounded-lg p-2.5 border border-white/10 flex flex-col gap-2">
             <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-slate-200">Intervallo di Taglio Clip</span>
+              <span className="font-semibold text-slate-200">Clip Trim Range</span>
               <span className="font-mono text-indigo-300 font-bold">
                 {activeSegment.startTime.toFixed(1)}s → {activeSegment.endTime.toFixed(1)}s (
                 {(activeSegment.endTime - activeSegment.startTime).toFixed(1)}s)
@@ -774,7 +1175,7 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
 
             {/* Start slider */}
             <div className="flex items-center gap-2 text-xs">
-              <span className="text-[11px] text-slate-400 w-12 shrink-0">Inizio:</span>
+              <span className="text-[11px] text-slate-400 w-12 shrink-0">Start:</span>
               <input
                 type="range"
                 min={0}
@@ -795,7 +1196,7 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
 
             {/* End slider */}
             <div className="flex items-center gap-2 text-xs">
-              <span className="text-[11px] text-slate-400 w-12 shrink-0">Fine:</span>
+              <span className="text-[11px] text-slate-400 w-12 shrink-0">End:</span>
               <input
                 type="range"
                 min={activeSegment.startTime + 0.5}
@@ -882,16 +1283,16 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
         <div className="flex items-center gap-2">
           <ArrowRightLeft className="w-4 h-4 text-indigo-400 shrink-0" />
           <div>
-            <span className="font-bold text-white block">Transizione tra le Clip (Crossfade)</span>
+            <span className="font-bold text-white block">Crossfade Transitions Between Clips</span>
             <span className="text-[11px] text-slate-400">
-              Sfuma automaticamente il passaggio da una clip alla successiva
+              Smoothly blends transitions from one clip to the next
             </span>
           </div>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
           {[
-            { label: '0s (Netto)', val: 0 },
+            { label: '0s (None)', val: 0 },
             { label: '0.5s', val: 0.5 },
             { label: '1.0s', val: 1.0 },
             { label: '1.5s', val: 1.5 },
@@ -918,9 +1319,9 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
       {/* ACTION FOOTER: EXPORT MERGED MONTAGE & SAVE AS RINGTONE */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 pt-2 border-t border-white/10">
         <div className="text-[11px] text-slate-400">
-          Totale stimato:{' '}
-          <strong className="text-white">{estimatedTotalSec.toFixed(1)} secondi</strong>{' '}
-          ({activeSegs.length} clip attive)
+          Estimated total:{' '}
+          <strong className="text-white">{estimatedTotalSec.toFixed(1)} seconds</strong>{' '}
+          ({activeSegs.length} active clips)
         </div>
 
         <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -932,7 +1333,7 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
             className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-md shadow-emerald-600/20 active:scale-95 transition-all"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>{isExportingMerged ? 'Esportazione...' : 'Scarica Montaggio (WAV/MP3)'}</span>
+            <span>{isExportingMerged ? 'Exporting...' : 'Download Montage (WAV/MP3)'}</span>
           </button>
 
           {/* Save as Ringtone */}
@@ -949,12 +1350,12 @@ export const MultiSegmentStudio: React.FC<MultiSegmentStudioProps> = ({
             {isSaved ? (
               <>
                 <Check className="w-3.5 h-3.5 text-white" />
-                <span>Montaggio Salvato!</span>
+                <span>Montage Saved!</span>
               </>
             ) : (
               <>
                 <BellPlus className="w-3.5 h-3.5 text-white" />
-                <span>Salva come Suoneria</span>
+                <span>Save as Ringtone</span>
               </>
             )}
           </button>
